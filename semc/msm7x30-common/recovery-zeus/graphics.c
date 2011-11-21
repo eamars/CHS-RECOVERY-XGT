@@ -30,13 +30,12 @@
 #include <pixelflinger/pixelflinger.h>
 #include <cutils/memory.h>
 
-#ifndef BOARD_LDPI_RECOVERY
-	#include "font_10x18.h"
-#else
-	#include "font_7x16.h"
-#endif
+
 
 #include "minui.h"
+
+#include "font.h"
+#include "chinese.h"
 
 typedef struct {
     GGLSurface texture;
@@ -132,6 +131,7 @@ static void set_active_framebuffer(unsigned n)
     if (n > 1) return;
     vi.yres_virtual = vi.yres * 2;
     vi.yoffset = n * vi.yres;
+    vi.bits_per_pixel = 16;
     if (ioctl(gr_fb_fd, FBIOPUT_VSCREENINFO, &vi) < 0) {
         perror("active fb swap failed");
     }
@@ -207,30 +207,57 @@ void gr_color(unsigned char r, unsigned char g, unsigned char b, unsigned char a
 
 int gr_measure(const char *s)
 {
-    return gr_font->cwidth * strlen(s);
+    return gr_font->cwidth * str_utf8_length(s);
 }
+
+static GGLSurface font_ftex;
+static int font_bitmap_count;
+static int font_char_per_bitmap = 128;
+static void** font_data;
+
+#include <sys/time.h>
 
 int gr_text(int x, int y, const char *s)
 {
     GGLContext *gl = gr_context;
-    GRFont *font = gr_font;
-    unsigned off;
+    GRFont *gfont = gr_font;
+    unsigned off, width, height, font_bitmap_width, n;
 
-    y -= font->ascent;
+    y -= gfont->ascent;
 
-    gl->bindTexture(gl, &font->texture);
     gl->texEnvi(gl, GGL_TEXTURE_ENV, GGL_TEXTURE_ENV_MODE, GGL_REPLACE);
     gl->texGeni(gl, GGL_S, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
     gl->texGeni(gl, GGL_T, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
     gl->enable(gl, GGL_TEXTURE_2D);
 
-    while((off = *s++)) {
-        off -= 32;
-        if (off < 96) {
-            gl->texCoord2i(gl, (off * font->cwidth) - x, 0 - y);
-            gl->recti(gl, x, y, x + font->cwidth, y + font->cheight);
+    while((off = *s)) {
+        if(*((unsigned char*)(s)) < 0x20) {
+            s++;
+            continue;
         }
-        x += font->cwidth;
+        width = gfont->cwidth;
+        height = gfont->cheight;
+        off = ch_utf8_to_custom(s);
+        if(off >= 96)
+            width *= 2;
+        memcpy(&font_ftex, &gfont->texture, sizeof(font_ftex));
+        font_bitmap_width = (font.width % (font.cwidth * font_char_per_bitmap));
+        if(!font_bitmap_width)
+            font_bitmap_width = font.cwidth * font_char_per_bitmap;
+        font_ftex.width = font_bitmap_width;
+        font_ftex.stride = font_bitmap_width;
+        font_ftex.data = font_data[(off < 96) ? (off / font_char_per_bitmap) : ((96 + (off - 96) * 2) / font_char_per_bitmap)];
+        gl->bindTexture(gl, &font_ftex);
+        if(off >= 96)
+            gl->texCoord2i(gl, ((96 + (off - 96) * 2) * font.cwidth) % (font_char_per_bitmap * font.cwidth) - x, 0 - y);
+        else
+            gl->texCoord2i(gl, (off % font_char_per_bitmap) * width - x, 0 - y);
+        gl->recti(gl, x, y, x + width, y + height);
+        x += width;
+        n = ch_utf8_length(s);
+        if(n <= 0)
+            break;
+        s += n;
     }
 
     return x;
@@ -277,11 +304,31 @@ static void gr_init_font(void)
     GGLSurface *ftex;
     unsigned char *bits, *rle;
     unsigned char *in, data;
+    int i, d, n, bmp, pos;
 
     gr_font = calloc(sizeof(*gr_font), 1);
     ftex = &gr_font->texture;
 
-    bits = malloc(font.width * font.height);
+    font_bitmap_count = font.width / font.cwidth / font_char_per_bitmap + 1;
+    font_data = (void**)malloc(font_bitmap_count * sizeof(void*));
+    for(n = 0; n < font_bitmap_count; n++)
+    {
+        font_data[n] = malloc(font_char_per_bitmap * font.cwidth * font.cheight);
+        memset(font_data[n], 0, font_char_per_bitmap * font.cwidth * font.cheight);
+    }
+    d = 0;
+    in = font.rundata;
+    while((data = *in++))
+    {
+        n = data & 0x7f;
+        for(i = 0; i < n; i++, d++)
+        {
+            bmp = d % font.width / (font.cwidth * font_char_per_bitmap);
+            pos = d / font.width * (font.cwidth * font_char_per_bitmap) + (d % (font.cwidth * font_char_per_bitmap));
+            ((unsigned char*)(font_data[bmp]))[pos] = (data & 0x80) ? 0xff : 0;
+        }
+    }
+    bits = font_data[0];
 
     ftex->version = sizeof(*ftex);
     ftex->width = font.width;

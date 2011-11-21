@@ -21,19 +21,19 @@
 #include "extendedcommands.h"
 
 //char* MENU_HEADERS[] = { NULL };
-char* MENU_HEADERS[] = { "Xperia Arc [v03]",
+char* MENU_HEADERS[] = { "Xperia Arc Ver.1",
 			 "",
 			 NULL };
 
-char* MENU_ITEMS[] = { "reboot options",
-                       "install zip from sdcard",
-                       "apply /sdcard/update.zip",
-                       "factory reset",
-                       "wipe cache partition",
-                       "backup and restore",
-                       "mounts and storage",
-                       "advanced",
-                       "power off",
+char* MENU_ITEMS[] = { "重启选项",
+                       "从SD卡安装update.zip",
+                       "选择/sdcard/update.zip",
+                       "清空用户数据",
+                       "清空缓存",
+                       "备份和恢复",
+                       "挂载",
+                       "高级选项",
+                       "关机",
                        NULL };
 
 int device_recovery_start() {
